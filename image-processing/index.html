@@ -1,0 +1,193 @@
+<style>
+#c {
+  width: 400px;
+  height: 300px;
+}
+</style>
+<canvas id="c"></canvas>
+<script src="../webgl-utils.js"></script>
+<script src="../m3.js"></script>
+<script>
+
+async function main () {
+  var canvas = document.getElementById("c");
+  var gl = canvas.getContext("webgl2");
+  if (!gl) {
+    throw new Error("WebGL2 context is not supported by your browser.");
+    return;
+  }
+  
+  var shaders = await getShaders();
+  
+  var program = webglUtils.createProgramFromSources(gl, shaders);
+
+  var positionAttributeLocation = gl.getAttribLocation(program, "a_position");
+  var texCoordAttributeLocation = gl.getAttribLocation(program, "a_texCoord");
+  var matrixLocation = gl.getUniformLocation(program, "u_matrix");
+  var resolutionLocation = gl.getUniformLocation(program, "u_resolution");
+  var imageLocation = gl.getUniformLocation(program, "u_image");
+  var kernelLocation = gl.getUniformLocation(program, "u_kernel[0]");
+  var kernelWeightLocation = gl.getUniformLocation(program, "u_kernelWeight");
+
+  var vao = gl.createVertexArray();
+  gl.bindVertexArray(vao);
+  
+  var positionBuffer = gl.createBuffer();
+  
+  gl.enableVertexAttribArray(positionAttributeLocation);
+  
+  gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+  
+  var size = 2;          // 2 components per iteration
+  var type = gl.FLOAT;   // the data is 32bit floats
+  var normalize = false; // don't normalize the data
+  var stride = 0;        // 0 = move forward size * sizeof(type) each iteration to get the next position
+  var offset = 0;        // start at the beginning of the buffer
+  gl.vertexAttribPointer(
+      positionAttributeLocation, size, type, normalize, stride, offset);
+    
+  var texCoordBuffer = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, texCoordBuffer);
+  gl.bufferData(
+    gl.ARRAY_BUFFER,
+    new Float32Array(
+      [
+        0.0, 0.0,
+        1.0, 0.0,
+        0.0, 1.0,
+        0.0, 1.0,
+        1.0, 0.0,
+        1.0, 1.0,
+      ]
+    ),
+    gl.STATIC_DRAW
+  )
+  gl.enableVertexAttribArray(texCoordAttributeLocation);
+  
+  var size = 2;          // 2 components per iteration
+  var type = gl.FLOAT;   // the data is 32bit floats
+  var normalize = false; // don't normalize the data
+  var stride = 0;        // 0 = move forward size * sizeof(type) each iteration to get the next position
+  var offset = 0;        // start at the beginning of the buffer
+  gl.vertexAttribPointer(
+      texCoordAttributeLocation, size, type, normalize, stride, offset);
+    
+  var texture = gl.createTexture();
+  
+  gl.activeTexture(gl.TEXTURE0 + 0);
+  
+  gl.bindTexture(gl.TEXTURE_2D, texture);
+  
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.NEAREST);
+  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+  
+  var image = await getImage("../leaves.jpg");
+  
+  var mipLevel = 0;               // the largest mip
+  var internalFormat = gl.RGBA;   // format we want in the texture
+  var srcFormat = gl.RGBA;        // format of data we are supplying
+  var srcType = gl.UNSIGNED_BYTE; // type of data we are supplying
+  gl.texImage2D(gl.TEXTURE_2D,
+                mipLevel,
+                internalFormat,
+                srcFormat,
+                srcType,
+                image);
+
+  var edgeDetectKernel = [
+    1, 8, 1,
+    8, 16, 8,
+    1, 8, 1
+  ];
+  
+  let x = 200;
+  let y = 170;
+  
+  canvas.addEventListener("mousemove", function (event) {
+    x = event.offsetX;
+    y = event.offsetY;
+    drawScene();
+  })
+  
+  drawScene();
+  
+  function drawScene() {
+    webglUtils.resizeCanvasToDisplaySize(gl.canvas);
+    gl.viewport(0, 0, gl.canvas.width, gl.canvas.height);
+    
+    gl.clearColor(0, 0, 0, 0);
+    gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+    
+    gl.useProgram(program);
+    
+    gl.bindVertexArray(vao);
+    
+    gl.uniform2f(resolutionLocation, gl.canvas.width, gl.canvas.height);
+    
+    gl.uniform1i(imageLocation, 0);
+    
+    gl.uniform1fv(kernelLocation, edgeDetectKernel);
+    gl.uniform1f(kernelWeightLocation, computeKernelWeight(edgeDetectKernel));
+    
+    gl.bindBuffer(gl.ARRAY_BUFFER, positionBuffer);
+    
+    setRectangle(gl, 0, 0, image.width, image.height);
+    
+    var matrix = m3.projection(gl.canvas.clientWidth, gl.canvas.clientHeight)
+    matrix = m3.translate(matrix, x, y);
+    matrix = m3.rotate(matrix, 0);
+    matrix = m3.scale(matrix, 1, 1);
+    
+    gl.uniformMatrix3fv(matrixLocation, false, matrix);
+    
+    var primitiveType = gl.TRIANGLES;
+    var offset = 0;
+    var count = 6;
+    gl.drawArrays(primitiveType, offset, count);
+  }
+}
+
+function computeKernelWeight(kernel) {
+  var weight = kernel.reduce((prev, curr) => prev + curr);
+  return weight <= 0 ? 1 : weight;
+}
+
+function setRectangle(gl, x, y, width, height) {
+  var x1 = x;
+  var x2 = x + width;
+  var y1 = y;
+  var y2 = y + height;
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([
+     x1, y1,
+     x2, y1,
+     x1, y2,
+     x1, y2,
+     x2, y1,
+     x2, y2,
+  ]), gl.STATIC_DRAW);
+}
+
+function getShaders () {
+  return Promise.all(["shader.vert", "shader.frag"].map(getFile))
+}
+
+function getFile (filename) {
+  return fetch(filename)
+    .then((response) => response.text())
+}
+
+function getImage (filename) {
+  var image = new Image();
+  image.src = filename
+  return new Promise((resolve, reject) => {
+    image.addEventListener("load", function () {
+      resolve(image)
+    })
+    image.addEventListener("error", reject)
+  })
+}
+
+main()
+</script>
