@@ -76,11 +76,23 @@ async function main () {
   const waveUniform = gl.getUniformLocation(program, "u_wave")
   gl.uniform1f(waveUniform, 20)
   
+  let trans = mat4.create()
+  mat4.identity(trans)
+  mat4.rotate(trans, trans, Math.PI/3, vec3.fromValues(0, 0, 1))
+  console.log(trans)
+  let vec = vec3.fromValues(1, 0, 0)
+  console.log(vec3.transformMat3(vec, vec, trans))
+  
+  const transUniform = gl.getUniformLocation(program, "u_trans")
+  gl.uniformMatrix4fv(transUniform, false, trans)
+  
   render()
   
   canvas.addEventListener("mousemove", function (event) {
     gl.uniform1f(mixUniform, event.offsetX / canvas.width)
     gl.uniform1f(waveUniform, event.offsetY)
+    mat4.rotate(trans, trans, event.movementX / 10, vec3.fromValues(0, 0, 1))
+    gl.uniformMatrix4fv(transUniform, false, trans)
     render()
   })
   
